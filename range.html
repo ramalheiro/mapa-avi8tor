@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Mapa de Alcance da Aeronave</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.js"></script>
+<style>
+  body, html { margin:0; padding:0; height:100%; }
+  #map { width:100%; height:100%; }
+  .label {
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: sans-serif;
+    white-space: nowrap;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<script>
+mapboxgl.accessToken = 'pk.eyJ1IjoicmFtYWxoZWlybyIsImEiOiJjbWZtdmN4OTcwNmM3Mm1vbDhtY3UxZ2ViIn0.7xL1bz2EaA_L5CHtBb9Ruw';
+
+const map = new mapboxgl.Map({
+  container: 'map',
+  style: 'mapbox://styles/mapbox/light-v11',
+  center: [-47.9, -15.8],
+  zoom: 4
+});
+
+// Função para gerar círculo aproximado em GeoJSON
+function createCircle(center, radiusKm, points = 128) {
+  const coords = [];
+  const [lon, lat] = center;
+  const R = 6371; // raio da Terra em km
+
+  for (let i = 0; i <= points; i++) {
+    const angle = (i / points) * (2 * Math.PI);
+    const dx = radiusKm / R * Math.cos(angle);
+    const dy = radiusKm / R * Math.sin(angle);
+
+    const newLat = lat + (dy * 180 / Math.PI);
+    const newLon = lon + (dx * 180 / Math.PI) / Math.cos(lat * Math.PI/180);
+    coords.push([newLon, newLat]);
+  }
+
+  return {
+    type: "Feature",
+    geometry: { type: "Polygon", coordinates: [coords] }
+  };
+}
+
+// Parse parâmetros
+function parseCircle() {
+  const params = new URLSearchParams(window.location.search);
+  const circleStr = params.get("circle");
+  if (!circleStr) return null;
+
+  const parts = circleStr.split(",").map(p => p.trim());
+  if (parts.length < 5) { console.warn("Parâmetros inválidos:", circleStr); return null; }
+
+  const [icao, latStr, lonStr, city, radiusNMStr] = parts;
+  const lat = parseFloat(latStr), lon = parseFloat(lonStr);
+  const radiusNM = parseFloat(radiusNMStr);
+  if ([lat,lon,radiusNM].some(v => isNaN(v))) { console.warn("Coordenadas inválidas:", circleStr); return null; }
+
+  const radiusKM = radiusNM * 1.852;
+
+  return {
+    center: [lon, lat],
+    city,
+    icao,
+    radiusNM,
+    radiusKM
+  };
+}
+
+const circleData = parseCircle();
+
+map.on("load", () => {
+  if (!circleData) {
+    console.log("Nenhum círculo encontrado.");
+    return;
+  }
+
+  const circleFeature = createCircle(circleData.center, circleData.radiusKM);
+
+  map.addSource("circle", { type: "geojson", data: circleFeature });
+
+  map.addLayer({
+    id: "circle-fill",
+    type: "fill",
+    source: "circle",
+    paint: {
+      "fill-color": "#007cbf",
+      "fill-opacity": 0.2
+    }
+  });
+
+  map.addLayer({
+    id: "circle-outline",
+    type: "line",
+    source: "circle",
+    paint: {
+      "line-color": "#007cbf",
+      "line-width": 2
+    }
+  });
+
+  // Label central
+  const el = document.createElement("div");
+  el.className = "label";
+  el.innerText = `${circleData.city}\n${circleData.radiusKM.toFixed(0)} km | ${circleData.radiusNM} nm`;
+
+  new mapboxgl.Marker({ element: el, anchor:"center" })
+    .setLngLat(circleData.center)
+    .addTo(map);
+
+  // Zoom para ver o círculo inteiro
+  const bounds = circleFeature.geometry.coordinates[0].reduce(
+    (b, c) => b.extend(c),
+    new mapboxgl.LngLatBounds(circleFeature.geometry.coordinates[0][0], circleFeature.geometry.coordinates[0][0])
+  );
+  map.fitBounds(bounds, { padding: 60 });
+});
+</script>
+</body>
+</html>
